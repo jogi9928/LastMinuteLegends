@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ChevronRight, Activity } from "lucide-react";
-import type { Session } from "@/lib/types";
+import type { Session } from "@/lib/local-types";
 import { toImageSrc } from "@/lib/mock";
 import { Badge } from "@/components/ui/badge";
 

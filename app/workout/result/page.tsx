@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { addSession, getSessionById } from "@/lib/storage";
 import { toImageSrc } from "@/lib/mock";
-import type { FormAnalysis, Session } from "@/lib/types";
+import type { FormAnalysis } from "@/lib/types";
+import type { Session } from "@/lib/local-types";
 import { cn } from "@/lib/utils";
 
 type Tone = "good" | "warn" | "bad" | "neutral";

@@ -10,9 +10,10 @@ import { MetricChart } from "@/components/charts/MetricChart";
 import { SessionList } from "@/components/SessionList";
 import { getOnboarding, getSessions, clearAll, setSessions } from "@/lib/storage";
 import { ensureSeededSessions } from "@/lib/mock";
-import type { OnboardingData, Session } from "@/lib/types";
+import type { UserProfile } from "@/lib/types";
+import type { Session } from "@/lib/local-types";
 
-function goalLabel(g: OnboardingData["goal"]) {
+function goalLabel(g: UserProfile["goal"]) {
   if (g === "aesthetics") return "Aesthetics";
   if (g === "strength") return "Strength";
   return "General fitness";
@@ -20,7 +21,7 @@ function goalLabel(g: OnboardingData["goal"]) {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [onboarding, setOnboardingState] = useState<OnboardingData | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [sessions, setSessionsState] = useState<Session[]>([]);
 
   useEffect(() => {
@@ -29,7 +30,7 @@ export default function DashboardPage() {
       router.replace("/onboarding");
       return;
     }
-    setOnboardingState(ob);
+    setProfile(ob);
     const existing = getSessions();
     const seeded = ensureSeededSessions(existing);
     if (existing.length === 0) setSessions(seeded);
@@ -50,9 +51,9 @@ export default function DashboardPage() {
     };
   }, [sessions]);
 
-  if (!onboarding) return null;
+  if (!profile) return null;
 
-  const greeting = onboarding.name?.trim() ? `Welcome back, ${onboarding.name}` : "Welcome back";
+  const greeting = "Welcome back";
 
   return (
     <main className="relative min-h-screen pb-20">
@@ -92,10 +93,10 @@ export default function DashboardPage() {
         <div className="flex flex-col-reverse items-start gap-6 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Badge variant="success">{goalLabel(onboarding.goal)}</Badge>
-              <Badge variant="secondary">{onboarding.daysPerWeek}× / wk</Badge>
+              <Badge variant="success">{goalLabel(profile.goal)}</Badge>
+              <Badge variant="secondary">{profile.frequency_per_week}× / wk</Badge>
               <Badge variant="outline" className="capitalize">
-                {onboarding.intensity}
+                {profile.experience.intensity}
               </Badge>
             </div>
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{greeting}</h1>

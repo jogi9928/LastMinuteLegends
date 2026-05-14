@@ -1,7 +1,9 @@
-import type { OnboardingData, Session } from "./types";
+import type { UserProfile } from "./types";
+import type { Session } from "./local-types";
 
-const ONBOARDING_KEY = "lml.onboarding";
+const PROFILE_KEY = "lml.profile";
 const SESSIONS_KEY = "lml.sessions";
+const LEGACY_KEYS = ["lml.onboarding", "lml.onboarding.draft"];
 
 function safeGetItem(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -21,18 +23,30 @@ function safeSetItem(key: string, value: string) {
   }
 }
 
-export function getOnboarding(): OnboardingData | null {
-  const raw = safeGetItem(ONBOARDING_KEY);
+function purgeLegacy() {
+  if (typeof window === "undefined") return;
+  for (const k of LEGACY_KEYS) {
+    try {
+      window.localStorage.removeItem(k);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function getOnboarding(): UserProfile | null {
+  purgeLegacy();
+  const raw = safeGetItem(PROFILE_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as OnboardingData;
+    return JSON.parse(raw) as UserProfile;
   } catch {
     return null;
   }
 }
 
-export function setOnboarding(data: OnboardingData) {
-  safeSetItem(ONBOARDING_KEY, JSON.stringify(data));
+export function setOnboarding(profile: UserProfile) {
+  safeSetItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
 export function hasCompletedOnboarding(): boolean {
@@ -66,6 +80,7 @@ export function getSessionById(id: string): Session | undefined {
 
 export function clearAll() {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(ONBOARDING_KEY);
+  window.localStorage.removeItem(PROFILE_KEY);
   window.localStorage.removeItem(SESSIONS_KEY);
+  purgeLegacy();
 }

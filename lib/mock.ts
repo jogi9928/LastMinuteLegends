@@ -1,4 +1,5 @@
-import type { FormAnalysis, Session } from "./types";
+import type { FormAnalysis } from "./types";
+import type { Session } from "./local-types";
 
 function makeKeyframeSvg(opts: {
   label: string;

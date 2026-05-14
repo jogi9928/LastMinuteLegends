@@ -1,6 +1,27 @@
-export type Exercise = "squat" | "pushup" | "deadlift" | "bench" | "lunge";
+/**
+ * SHARED CONTRACT — DO NOT MODIFY WITHOUT TEAM AGREEMENT
+ * Used by Stream 2 (LLM/agent) and Stream 3 (frontend)
+ * Last locked: 2026-05-14
+ */
 
-export interface FormAnalysis {
+export type UserProfile = {
+  goal: "aesthetics" | "strength" | "general_fitness";
+  avatar: "male" | "female";
+  experience: {
+    years: number;
+    intensity: "beginner" | "intermediate" | "advanced";
+  };
+  age: number;
+  injuries: string[];
+  equipment: "full_gym" | "home_setup" | "dumbbells" | "bodyweight";
+  frequency_per_week: number;
+  baseline: {
+    weight: number; // in lbs
+    height: number; // in inches
+  };
+};
+
+export type FormAnalysis = {
   exercise: string;
   reps: number;
   depth_degrees: number;
@@ -8,33 +29,10 @@ export interface FormAnalysis {
   tempo_eccentric_sec: number;
   asymmetry_score: number;
   frame_issues: string[];
-  image: string;
-}
+  image: string; // base64
+};
 
-export interface Session extends FormAnalysis {
-  id: string;
-  createdAt: string;
-}
-
-export type Goal = "aesthetics" | "strength" | "general";
-export type Avatar = "male" | "female";
-export type Intensity = "beginner" | "intermediate" | "advanced";
-export type Equipment = "full_gym" | "home_setup" | "dumbbells" | "bodyweight";
-export type CalibrationExercise = "bodyweight_squat" | "pushup";
-
-export interface OnboardingData {
-  name?: string;
-  goal: Goal;
-  avatar: Avatar;
-  experienceYears: number;
-  intensity: Intensity;
-  age: number;
-  injuries: string[];
-  injuriesOther: string;
-  equipment: Equipment;
-  daysPerWeek: number;
-  weightKg: number;
-  heightCm: number;
-  calibration: CalibrationExercise;
-  completedAt: string;
-}
+export type CritiqueRequest = {
+  formAnalysis: FormAnalysis;
+  userProfile: UserProfile;
+};

@@ -25,9 +25,11 @@ import { Progress } from "@/components/ui/progress";
 import { StepShell } from "@/components/onboarding/StepShell";
 import { OptionCard } from "@/components/onboarding/OptionCard";
 import { setOnboarding } from "@/lib/storage";
-import type { OnboardingData } from "@/lib/types";
+import type { UserProfile } from "@/lib/types";
+import type { CalibrationExercise } from "@/lib/local-types";
 
 const TOTAL_STEPS = 9;
+const DRAFT_KEY = "lml.profile.draft";
 
 const COMMON_INJURIES = [
   "Lower back",
@@ -40,48 +42,57 @@ const COMMON_INJURIES = [
   "Elbows",
 ];
 
-const DEFAULT: OnboardingData = {
-  name: "",
+// Wizard-only state: UserProfile + transient fields that don't get persisted
+// to the shared contract. _injuriesOther is merged into injuries[] on submit;
+// _calibration drives the next screen and isn't part of UserProfile.
+type OnboardingDraft = UserProfile & {
+  _injuriesOther: string;
+  _calibration: CalibrationExercise;
+};
+
+const DEFAULT: OnboardingDraft = {
   goal: "strength",
   avatar: "male",
-  experienceYears: 2,
-  intensity: "intermediate",
+  experience: { years: 2, intensity: "intermediate" },
   age: 25,
   injuries: [],
-  injuriesOther: "",
   equipment: "full_gym",
-  daysPerWeek: 4,
-  weightKg: 75,
-  heightCm: 175,
-  calibration: "bodyweight_squat",
-  completedAt: "",
+  frequency_per_week: 4,
+  baseline: { weight: 165, height: 69 },
+  _injuriesOther: "",
+  _calibration: "bodyweight_squat",
 };
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
-  const [data, setData] = useState<OnboardingData>(DEFAULT);
+  const [data, setData] = useState<OnboardingDraft>(DEFAULT);
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem("lml.onboarding.draft");
+      const raw = window.localStorage.getItem(DRAFT_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        setData((prev) => ({ ...prev, ...parsed }));
+        const parsed = JSON.parse(raw) as Partial<OnboardingDraft>;
+        setData((prev) => ({
+          ...prev,
+          ...parsed,
+          experience: { ...prev.experience, ...(parsed.experience ?? {}) },
+          baseline: { ...prev.baseline, ...(parsed.baseline ?? {}) },
+        }));
       }
     } catch {}
   }, []);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("lml.onboarding.draft", JSON.stringify(data));
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
     } catch {}
   }, [data]);
 
   const progress = useMemo(() => Math.round((step / TOTAL_STEPS) * 100), [step]);
 
-  function update<K extends keyof OnboardingData>(key: K, value: OnboardingData[K]) {
-    setData((prev) => ({ ...prev, [key]: value }));
+  function setDraft(patch: Partial<OnboardingDraft>) {
+    setData((prev) => ({ ...prev, ...patch }));
   }
 
   function next() {
@@ -94,10 +105,20 @@ export default function OnboardingPage() {
   }
 
   function finish() {
-    const final: OnboardingData = { ...data, completedAt: new Date().toISOString() };
-    setOnboarding(final);
+    const otherInjury = data._injuriesOther.trim();
+    const profile: UserProfile = {
+      goal: data.goal,
+      avatar: data.avatar,
+      experience: { years: data.experience.years, intensity: data.experience.intensity },
+      age: data.age,
+      injuries: otherInjury ? [...data.injuries, otherInjury] : [...data.injuries],
+      equipment: data.equipment,
+      frequency_per_week: data.frequency_per_week,
+      baseline: { weight: data.baseline.weight, height: data.baseline.height },
+    };
+    setOnboarding(profile);
     try {
-      window.localStorage.removeItem("lml.onboarding.draft");
+      window.localStorage.removeItem(DRAFT_KEY);
     } catch {}
     router.push("/dashboard");
   }
@@ -107,7 +128,7 @@ export default function OnboardingPage() {
       case 4:
         return data.age >= 13 && data.age <= 100;
       case 8:
-        return data.weightKg > 30 && data.heightCm > 100;
+        return data.baseline.weight > 60 && data.baseline.height > 40;
       default:
         return true;
     }
@@ -131,15 +152,15 @@ export default function OnboardingPage() {
         <Progress value={progress} className="h-1.5" />
       </header>
 
-      {step === 1 ? <GoalStep data={data} update={update} /> : null}
-      {step === 2 ? <AvatarStep data={data} update={update} /> : null}
-      {step === 3 ? <ExperienceStep data={data} update={update} /> : null}
-      {step === 4 ? <AgeStep data={data} update={update} /> : null}
-      {step === 5 ? <InjuriesStep data={data} update={update} /> : null}
-      {step === 6 ? <EquipmentStep data={data} update={update} /> : null}
-      {step === 7 ? <FrequencyStep data={data} update={update} /> : null}
-      {step === 8 ? <BaselineStep data={data} update={update} /> : null}
-      {step === 9 ? <CalibrationStep data={data} update={update} /> : null}
+      {step === 1 ? <GoalStep data={data} setDraft={setDraft} /> : null}
+      {step === 2 ? <AvatarStep data={data} setDraft={setDraft} /> : null}
+      {step === 3 ? <ExperienceStep data={data} setDraft={setDraft} /> : null}
+      {step === 4 ? <AgeStep data={data} setDraft={setDraft} /> : null}
+      {step === 5 ? <InjuriesStep data={data} setDraft={setDraft} /> : null}
+      {step === 6 ? <EquipmentStep data={data} setDraft={setDraft} /> : null}
+      {step === 7 ? <FrequencyStep data={data} setDraft={setDraft} /> : null}
+      {step === 8 ? <BaselineStep data={data} setDraft={setDraft} /> : null}
+      {step === 9 ? <CalibrationStep data={data} setDraft={setDraft} /> : null}
 
       <div className="mt-8 flex w-full max-w-xl items-center justify-between gap-3">
         <Button variant="ghost" onClick={back} disabled={step === 1} size="lg">
@@ -154,31 +175,31 @@ export default function OnboardingPage() {
 }
 
 type StepProps = {
-  data: OnboardingData;
-  update: <K extends keyof OnboardingData>(key: K, value: OnboardingData[K]) => void;
+  data: OnboardingDraft;
+  setDraft: (patch: Partial<OnboardingDraft>) => void;
 };
 
-function GoalStep({ data, update }: StepProps) {
+function GoalStep({ data, setDraft }: StepProps) {
   return (
     <StepShell title="What's your goal?" description="We'll tune your program around the outcome that matters to you.">
       <div className="space-y-3">
         <OptionCard
           selected={data.goal === "aesthetics"}
-          onClick={() => update("goal", "aesthetics")}
+          onClick={() => setDraft({ goal: "aesthetics" })}
           icon={<Flame className="h-5 w-5" />}
           title="Aesthetics"
           subtitle="Build muscle, reduce body fat, look the part."
         />
         <OptionCard
           selected={data.goal === "strength"}
-          onClick={() => update("goal", "strength")}
+          onClick={() => setDraft({ goal: "strength" })}
           icon={<Trophy className="h-5 w-5" />}
           title="Strength"
           subtitle="Move heavier weight. Compound-lift focused."
         />
         <OptionCard
-          selected={data.goal === "general"}
-          onClick={() => update("goal", "general")}
+          selected={data.goal === "general_fitness"}
+          onClick={() => setDraft({ goal: "general_fitness" })}
           icon={<Activity className="h-5 w-5" />}
           title="General fitness"
           subtitle="Stay healthy, mobile, and capable."
@@ -188,7 +209,7 @@ function GoalStep({ data, update }: StepProps) {
   );
 }
 
-function AvatarStep({ data, update }: StepProps) {
+function AvatarStep({ data, setDraft }: StepProps) {
   return (
     <StepShell title="Pick your coach" description="Your HeyGen avatar will deliver feedback after each workout.">
       <div className="grid grid-cols-2 gap-3">
@@ -196,7 +217,7 @@ function AvatarStep({ data, update }: StepProps) {
           <button
             type="button"
             key={a}
-            onClick={() => update("avatar", a)}
+            onClick={() => setDraft({ avatar: a })}
             className={
               "flex flex-col items-center gap-3 rounded-xl border p-6 transition-all hover:border-primary/60 hover:bg-primary/5 " +
               (data.avatar === a ? "border-primary bg-primary/10 ring-2 ring-primary/30" : "border-border bg-card")
@@ -218,20 +239,20 @@ function AvatarStep({ data, update }: StepProps) {
   );
 }
 
-function ExperienceStep({ data, update }: StepProps) {
+function ExperienceStep({ data, setDraft }: StepProps) {
   return (
     <StepShell title="How long have you trained?" description="Roughly — we just need a feel for your background.">
       <div className="space-y-3">
         <div className="flex items-baseline justify-between">
           <Label className="text-sm text-muted-foreground">Years lifting</Label>
           <span className="text-3xl font-semibold tabular-nums text-primary">
-            {data.experienceYears}
-            <span className="ml-1 text-sm text-muted-foreground">yr{data.experienceYears === 1 ? "" : "s"}</span>
+            {data.experience.years}
+            <span className="ml-1 text-sm text-muted-foreground">yr{data.experience.years === 1 ? "" : "s"}</span>
           </span>
         </div>
         <Slider
-          value={[data.experienceYears]}
-          onValueChange={(v) => update("experienceYears", v[0])}
+          value={[data.experience.years]}
+          onValueChange={(v) => setDraft({ experience: { ...data.experience, years: v[0] } })}
           min={0}
           max={20}
           step={1}
@@ -244,8 +265,8 @@ function ExperienceStep({ data, update }: StepProps) {
           {(["beginner", "intermediate", "advanced"] as const).map((i) => (
             <OptionCard
               key={i}
-              selected={data.intensity === i}
-              onClick={() => update("intensity", i)}
+              selected={data.experience.intensity === i}
+              onClick={() => setDraft({ experience: { ...data.experience, intensity: i } })}
               title={i.charAt(0).toUpperCase() + i.slice(1)}
               subtitle={
                 i === "beginner"
@@ -262,7 +283,7 @@ function ExperienceStep({ data, update }: StepProps) {
   );
 }
 
-function AgeStep({ data, update }: StepProps) {
+function AgeStep({ data, setDraft }: StepProps) {
   return (
     <StepShell title="How old are you?" description="Used to calibrate recovery and intensity expectations.">
       <div className="flex items-end gap-4">
@@ -271,7 +292,7 @@ function AgeStep({ data, update }: StepProps) {
           min={13}
           max={100}
           value={data.age}
-          onChange={(e) => update("age", parseInt(e.target.value || "0", 10))}
+          onChange={(e) => setDraft({ age: parseInt(e.target.value || "0", 10) })}
           className="h-16 max-w-[8rem] text-3xl font-semibold tabular-nums"
         />
         <span className="pb-3 text-base text-muted-foreground">years old</span>
@@ -280,10 +301,10 @@ function AgeStep({ data, update }: StepProps) {
   );
 }
 
-function InjuriesStep({ data, update }: StepProps) {
+function InjuriesStep({ data, setDraft }: StepProps) {
   function toggle(label: string) {
     const has = data.injuries.includes(label);
-    update("injuries", has ? data.injuries.filter((i) => i !== label) : [...data.injuries, label]);
+    setDraft({ injuries: has ? data.injuries.filter((i) => i !== label) : [...data.injuries, label] });
   }
   return (
     <StepShell title="Any injuries or mobility limits?" description="We'll flag exercises that load the affected areas.">
@@ -312,8 +333,8 @@ function InjuriesStep({ data, update }: StepProps) {
         <Textarea
           id="other-injury"
           placeholder="e.g. recovering from ACL surgery, limited overhead range…"
-          value={data.injuriesOther}
-          onChange={(e) => update("injuriesOther", e.target.value)}
+          value={data._injuriesOther}
+          onChange={(e) => setDraft({ _injuriesOther: e.target.value })}
           rows={3}
         />
       </div>
@@ -321,7 +342,7 @@ function InjuriesStep({ data, update }: StepProps) {
   );
 }
 
-function EquipmentStep({ data, update }: StepProps) {
+function EquipmentStep({ data, setDraft }: StepProps) {
   const options = [
     { value: "full_gym", title: "Full gym", subtitle: "Racks, bars, machines, cable stack.", icon: <Dumbbell className="h-5 w-5" /> },
     { value: "home_setup", title: "Home setup", subtitle: "Rack + barbell at home.", icon: <Home className="h-5 w-5" /> },
@@ -335,7 +356,7 @@ function EquipmentStep({ data, update }: StepProps) {
           <OptionCard
             key={o.value}
             selected={data.equipment === o.value}
-            onClick={() => update("equipment", o.value)}
+            onClick={() => setDraft({ equipment: o.value })}
             title={o.title}
             subtitle={o.subtitle}
             icon={o.icon}
@@ -346,20 +367,20 @@ function EquipmentStep({ data, update }: StepProps) {
   );
 }
 
-function FrequencyStep({ data, update }: StepProps) {
+function FrequencyStep({ data, setDraft }: StepProps) {
   return (
     <StepShell title="How many days per week?" description="Be honest — consistency beats ambition.">
       <div className="space-y-3">
         <div className="flex items-baseline justify-between">
           <Label className="text-sm text-muted-foreground">Training days</Label>
           <span className="text-4xl font-semibold tabular-nums text-primary">
-            {data.daysPerWeek}
+            {data.frequency_per_week}
             <span className="ml-1 text-sm text-muted-foreground">/ wk</span>
           </span>
         </div>
         <Slider
-          value={[data.daysPerWeek]}
-          onValueChange={(v) => update("daysPerWeek", v[0])}
+          value={[data.frequency_per_week]}
+          onValueChange={(v) => setDraft({ frequency_per_week: v[0] })}
           min={1}
           max={7}
           step={1}
@@ -374,35 +395,39 @@ function FrequencyStep({ data, update }: StepProps) {
   );
 }
 
-function BaselineStep({ data, update }: StepProps) {
+function BaselineStep({ data, setDraft }: StepProps) {
   return (
     <StepShell title="Baseline stats" description="We'll track progress relative to this starting point.">
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="weight" className="text-sm text-muted-foreground">
-            Body weight (kg)
+            Body weight (lbs)
           </Label>
           <Input
             id="weight"
             type="number"
-            min={30}
-            max={250}
-            value={data.weightKg}
-            onChange={(e) => update("weightKg", parseFloat(e.target.value || "0"))}
+            min={60}
+            max={500}
+            value={data.baseline.weight}
+            onChange={(e) =>
+              setDraft({ baseline: { ...data.baseline, weight: parseFloat(e.target.value || "0") } })
+            }
             className="h-12 text-lg tabular-nums"
           />
         </div>
         <div className="space-y-2">
           <Label htmlFor="height" className="text-sm text-muted-foreground">
-            Height (cm)
+            Height (in)
           </Label>
           <Input
             id="height"
             type="number"
-            min={100}
-            max={230}
-            value={data.heightCm}
-            onChange={(e) => update("heightCm", parseFloat(e.target.value || "0"))}
+            min={40}
+            max={90}
+            value={data.baseline.height}
+            onChange={(e) =>
+              setDraft({ baseline: { ...data.baseline, height: parseFloat(e.target.value || "0") } })
+            }
             className="h-12 text-lg tabular-nums"
           />
         </div>
@@ -411,7 +436,7 @@ function BaselineStep({ data, update }: StepProps) {
   );
 }
 
-function CalibrationStep({ data, update }: StepProps) {
+function CalibrationStep({ data, setDraft }: StepProps) {
   return (
     <StepShell
       title="One last thing — calibration"
@@ -419,15 +444,15 @@ function CalibrationStep({ data, update }: StepProps) {
     >
       <div className="space-y-3">
         <OptionCard
-          selected={data.calibration === "bodyweight_squat"}
-          onClick={() => update("calibration", "bodyweight_squat")}
+          selected={data._calibration === "bodyweight_squat"}
+          onClick={() => setDraft({ _calibration: "bodyweight_squat" })}
           title="Bodyweight squat"
           subtitle="3-5 controlled reps from a side angle."
           icon={<CircleDot className="h-5 w-5" />}
         />
         <OptionCard
-          selected={data.calibration === "pushup"}
-          onClick={() => update("calibration", "pushup")}
+          selected={data._calibration === "pushup"}
+          onClick={() => setDraft({ _calibration: "pushup" })}
           title="Push-up"
           subtitle="3-5 strict push-ups from a side angle."
           icon={<CircleDot className="h-5 w-5" />}

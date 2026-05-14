@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getSessions } from "@/lib/storage";
 import { ensureSeededSessions, toImageSrc } from "@/lib/mock";
-import type { Session } from "@/lib/types";
+import type { Session } from "@/lib/local-types";
 import { cn } from "@/lib/utils";
 
 function fmtDate(iso: string) {
