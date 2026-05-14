@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ChevronRight } from "lucide-react";
+import { Activity } from "lucide-react";
 import type { WorkoutSession } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -70,7 +70,6 @@ export function WorkoutSessionList({ sessions }: { sessions: WorkoutSession[] })
                 <span>· avg {Math.round(s.avg_form_score * 100)} / 100</span>
               </div>
             </div>
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
           </li>
         );
       })}
