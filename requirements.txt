@@ -1,0 +1,6 @@
+anthropic
+fastapi
+uvicorn
+httpx
+livekit
+python-dotenv
