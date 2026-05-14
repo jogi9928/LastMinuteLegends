@@ -26,7 +26,8 @@ import { StepShell } from "@/components/onboarding/StepShell";
 import { OptionCard } from "@/components/onboarding/OptionCard";
 import { setOnboarding } from "@/lib/storage";
 import type { UserProfile } from "@/lib/types";
-import type { CalibrationExercise } from "@/lib/local-types";
+
+type CalibrationExercise = "bodyweight_squat" | "pushup";
 
 const TOTAL_STEPS = 9;
 const DRAFT_KEY = "lml.profile.draft";

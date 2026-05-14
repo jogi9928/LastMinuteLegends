@@ -3,15 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, GitCompare, LogOut, Sparkles, Video } from "lucide-react";
+import { AlertTriangle, ArrowRight, LogOut, Sparkles, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { MetricChart } from "@/components/charts/MetricChart";
-import { SessionList } from "@/components/SessionList";
-import { getOnboarding, getSessions, clearAll, setSessions } from "@/lib/storage";
-import { ensureSeededSessions } from "@/lib/mock";
-import type { UserProfile } from "@/lib/types";
-import type { Session } from "@/lib/local-types";
+import { ScoreLineChart } from "@/components/charts/ScoreLineChart";
+import { WorkoutSessionList } from "@/components/WorkoutSessionList";
+import { getUserProfile, getWorkoutSessions, clearAll, setWorkoutSessions } from "@/lib/storage";
+import { ensureSeededWorkoutSessions } from "@/lib/mock";
+import type { UserProfile, WorkoutSession } from "@/lib/types";
 
 function goalLabel(g: UserProfile["goal"]) {
   if (g === "aesthetics") return "Aesthetics";
@@ -19,41 +18,60 @@ function goalLabel(g: UserProfile["goal"]) {
   return "General fitness";
 }
 
+const ISSUE_LABELS: Record<string, string> = {
+  chest_drop: "Chest dropping forward",
+  heel_lift: "Heels lifting",
+  knee_valgus: "Knees caving in",
+  bracing: "Brace before descending",
+  tempo_fast: "Eccentric too fast",
+  asymmetry: "Left/right asymmetry",
+  ribflare: "Rib flare at lockout",
+};
+
+function formatIssue(tag: string) {
+  return ISSUE_LABELS[tag] ?? tag.replace(/_/g, " ");
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [sessions, setSessionsState] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<WorkoutSession[]>([]);
 
   useEffect(() => {
-    const ob = getOnboarding();
+    const ob = getUserProfile();
     if (!ob) {
       router.replace("/onboarding");
       return;
     }
     setProfile(ob);
-    const existing = getSessions();
-    const seeded = ensureSeededSessions(existing);
-    if (existing.length === 0) setSessions(seeded);
-    setSessionsState(seeded);
+    const existing = getWorkoutSessions();
+    const seeded = ensureSeededWorkoutSessions(existing);
+    if (existing.length === 0) setWorkoutSessions(seeded);
+    setSessions(seeded);
   }, [router]);
 
   const chartData = useMemo(() => {
-    const ordered = [...sessions].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
-    const fmt = (iso: string) =>
-      new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    return {
-      depth: ordered.map((s) => ({ date: fmt(s.createdAt), value: s.depth_degrees })),
-      valgus: ordered.map((s) => ({ date: fmt(s.createdAt), value: s.knee_valgus_score })),
-      asym: ordered.map((s) => ({ date: fmt(s.createdAt), value: s.asymmetry_score })),
-      tempo: ordered.map((s) => ({ date: fmt(s.createdAt), value: s.tempo_eccentric_sec })),
-    };
+    const ordered = [...sessions].sort((a, b) => a.ended_at - b.ended_at);
+    return ordered.map((s) => ({
+      date: new Date(s.ended_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      value: Math.round(s.avg_form_score * 100),
+    }));
+  }, [sessions]);
+
+  const topIssues = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of sessions) {
+      for (const c of s.critiques) {
+        for (const tag of c.issues) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([tag, count]) => ({ tag, count }));
   }, [sessions]);
 
   if (!profile) return null;
-
-  const greeting = "Welcome back";
 
   return (
     <main className="relative min-h-screen pb-20">
@@ -67,25 +85,18 @@ export default function DashboardPage() {
             <Sparkles className="h-5 w-5 text-primary" />
             <span className="font-semibold tracking-tight">LastMinuteLegends</span>
           </div>
-          <div className="flex items-center gap-2">
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/compare">
-                <GitCompare className="h-4 w-4" /> Compare
-              </Link>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                clearAll();
-                router.replace("/onboarding");
-              }}
-              aria-label="Reset"
-              title="Reset onboarding (demo)"
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              clearAll();
+              router.replace("/onboarding");
+            }}
+            aria-label="Reset"
+            title="Reset onboarding (demo)"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </header>
 
@@ -99,9 +110,9 @@ export default function DashboardPage() {
                 {profile.experience.intensity}
               </Badge>
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{greeting}</h1>
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Welcome back</h1>
             <p className="text-muted-foreground">
-              {sessions.length} session{sessions.length === 1 ? "" : "s"} recorded · keep stacking quality reps.
+              {sessions.length} workout{sessions.length === 1 ? "" : "s"} logged · keep stacking quality reps.
             </p>
           </div>
           <Button asChild size="xl" className="w-full glow-emerald sm:w-auto">
@@ -112,49 +123,43 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="container mt-10">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Progress</h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricChart
-            title="Depth"
-            unit="°"
-            data={chartData.depth}
-            lowerIsBetter
-            decimals={0}
-            color="hsl(142 71% 45%)"
-          />
-          <MetricChart
-            title="Knee valgus"
-            data={chartData.valgus}
-            lowerIsBetter
-            decimals={2}
-            color="hsl(38 92% 58%)"
-          />
-          <MetricChart
-            title="Asymmetry"
-            data={chartData.asym}
-            lowerIsBetter
-            decimals={2}
-            color="hsl(0 72% 60%)"
-          />
-          <MetricChart
-            title="Eccentric tempo"
-            unit="s"
-            data={chartData.tempo}
-            decimals={1}
-            color="hsl(199 89% 60%)"
-          />
+      <section className="container mt-10 grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+        <div>
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Progress</h2>
+          <ScoreLineChart data={chartData} />
+        </div>
+
+        <div>
+          <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            <AlertTriangle className="h-4 w-4" /> Things to work on
+          </h2>
+          {topIssues.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border/60 bg-card/30 p-6 text-center text-sm text-muted-foreground">
+              No recurring issues. Nice.
+            </div>
+          ) : (
+            <ul className="divide-y divide-border/60 rounded-xl border border-border/60 bg-card/40 overflow-hidden">
+              {topIssues.map((it, idx) => (
+                <li key={it.tag} className="flex items-center gap-3 p-4">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-500/30 bg-amber-500/10 text-sm font-semibold text-amber-300">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">{formatIssue(it.tag)}</div>
+                    <div className="text-xs text-muted-foreground tabular-nums">
+                      flagged {it.count}× across recent sessions
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </section>
 
       <section className="container mt-10">
-        <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recent sessions</h2>
-          <Link href="/compare" className="text-sm text-primary hover:underline">
-            Compare two →
-          </Link>
-        </div>
-        <SessionList sessions={sessions} />
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recent workouts</h2>
+        <WorkoutSessionList sessions={sessions} />
       </section>
     </main>
   );

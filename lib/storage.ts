@@ -1,9 +1,14 @@
-import type { UserProfile } from "./types";
-import type { Session } from "./local-types";
+import type { UserProfile, WorkoutSession } from "./types";
 
-const PROFILE_KEY = "lml.profile";
-const SESSIONS_KEY = "lml.sessions";
-const LEGACY_KEYS = ["lml.onboarding", "lml.onboarding.draft"];
+const PROFILE_KEY = "userProfile";
+const SESSIONS_KEY = "workoutSessions";
+const LEGACY_KEYS = [
+  "lml.onboarding",
+  "lml.onboarding.draft",
+  "lml.profile",
+  "lml.profile.draft",
+  "lml.sessions",
+];
 
 function safeGetItem(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -34,7 +39,7 @@ function purgeLegacy() {
   }
 }
 
-export function getOnboarding(): UserProfile | null {
+export function getUserProfile(): UserProfile | null {
   purgeLegacy();
   const raw = safeGetItem(PROFILE_KEY);
   if (!raw) return null;
@@ -45,37 +50,37 @@ export function getOnboarding(): UserProfile | null {
   }
 }
 
-export function setOnboarding(profile: UserProfile) {
+export function setUserProfile(profile: UserProfile) {
   safeSetItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
 export function hasCompletedOnboarding(): boolean {
-  return getOnboarding() !== null;
+  return getUserProfile() !== null;
 }
 
-export function getSessions(): Session[] {
+// Backward-compat aliases — onboarding page still calls these
+export const getOnboarding = getUserProfile;
+export const setOnboarding = setUserProfile;
+
+export function getWorkoutSessions(): WorkoutSession[] {
   const raw = safeGetItem(SESSIONS_KEY);
   if (!raw) return [];
   try {
-    const parsed = JSON.parse(raw) as Session[];
+    const parsed = JSON.parse(raw) as WorkoutSession[];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-export function setSessions(sessions: Session[]) {
+export function setWorkoutSessions(sessions: WorkoutSession[]) {
   safeSetItem(SESSIONS_KEY, JSON.stringify(sessions));
 }
 
-export function addSession(session: Session) {
-  const sessions = getSessions();
+export function addWorkoutSession(session: WorkoutSession) {
+  const sessions = getWorkoutSessions();
   sessions.unshift(session);
-  setSessions(sessions);
-}
-
-export function getSessionById(id: string): Session | undefined {
-  return getSessions().find((s) => s.id === id);
+  setWorkoutSessions(sessions);
 }
 
 export function clearAll() {

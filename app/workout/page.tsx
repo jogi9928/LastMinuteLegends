@@ -1,127 +1,160 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Camera,
-  CircleDot,
   Loader2,
-  Maximize2,
-  RotateCcw,
   Sparkles,
-  Square,
-  Video as VideoIcon,
+  StopCircle,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { mockAnalyze } from "@/lib/mock";
+import { useFormCoachStream } from "@/lib/useFormCoachStream";
+import { getUserProfile, addWorkoutSession } from "@/lib/storage";
+import { EXERCISE_OPTIONS } from "@/lib/mock";
+import type { UserProfile, WorkoutSession } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-type Phase = "idle" | "recording" | "review" | "analyzing";
+const EXERCISE_LABELS: Record<string, string> = {
+  squat: "Squat",
+  bench: "Bench",
+  deadlift: "Deadlift",
+  pushup: "Pushup",
+  overhead_press: "Overhead Press",
+  row: "Row",
+};
 
-function formatDuration(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60).toString().padStart(2, "0");
-  const s = (total % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
+function scoreTone(s: number) {
+  if (s >= 0.8) return "text-emerald-400";
+  if (s >= 0.6) return "text-amber-400";
+  return "text-red-400";
+}
+
+function FormScoreGauge({ score }: { score: number | null }) {
+  const pct = Math.round(((score ?? 0) * 100));
+  const tone = score == null ? "text-muted-foreground" : scoreTone(score);
+  return (
+    <div className="flex items-center gap-4 rounded-xl border border-border/60 bg-card/40 p-4">
+      <div className="flex flex-col">
+        <span className="text-xs uppercase tracking-wider text-muted-foreground">Form score</span>
+        <span className={cn("text-3xl font-semibold tabular-nums", tone)}>
+          {score == null ? "—" : pct}
+          <span className="ml-1 text-sm font-normal text-muted-foreground">/ 100</span>
+        </span>
+      </div>
+      <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+        <div
+          className={cn(
+            "h-full rounded-full transition-all duration-500",
+            score == null
+              ? "bg-muted"
+              : score >= 0.8
+              ? "bg-emerald-500"
+              : score >= 0.6
+              ? "bg-amber-500"
+              : "bg-red-500"
+          )}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: ReturnType<typeof useFormCoachStream>["status"] }) {
+  const map: Record<
+    ReturnType<typeof useFormCoachStream>["status"],
+    { label: string; tone: string; icon: React.ReactNode }
+  > = {
+    idle: { label: "Idle", tone: "bg-zinc-700/70 text-zinc-200", icon: <Loader2 className="h-3 w-3" /> },
+    connecting: {
+      label: "Connecting",
+      tone: "bg-amber-500/20 text-amber-200 border border-amber-500/40",
+      icon: <Loader2 className="h-3 w-3 animate-spin" />,
+    },
+    streaming: {
+      label: "Streaming",
+      tone: "bg-emerald-500/20 text-emerald-200 border border-emerald-500/40",
+      icon: <Wifi className="h-3 w-3" />,
+    },
+    reconnecting: {
+      label: "Reconnecting",
+      tone: "bg-amber-500/20 text-amber-200 border border-amber-500/40",
+      icon: <Loader2 className="h-3 w-3 animate-spin" />,
+    },
+    error: {
+      label: "Error",
+      tone: "bg-red-500/20 text-red-200 border border-red-500/40",
+      icon: <WifiOff className="h-3 w-3" />,
+    },
+    closed: {
+      label: "Disconnected",
+      tone: "bg-zinc-700/70 text-zinc-200",
+      icon: <WifiOff className="h-3 w-3" />,
+    },
+  };
+  const item = map[status];
+  return (
+    <div className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium backdrop-blur", item.tone)}>
+      {status === "streaming" ? (
+        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-glow" />
+      ) : (
+        item.icon
+      )}
+      {item.label}
+    </div>
+  );
 }
 
 export default function WorkoutPage() {
   const router = useRouter();
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const playbackRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const startedAtRef = useRef<number>(0);
-
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [elapsed, setElapsed] = useState(0);
-  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [exercise, setExercise] = useState<string>("squat");
+  const startedAtRef = useRef<number>(Date.now());
 
   useEffect(() => {
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-      } catch (err) {
-        const name = err instanceof Error ? err.name : "";
-        setError(
-          name === "NotAllowedError"
-            ? "Camera access denied. Allow camera permissions and reload."
-            : "Could not access camera. Ensure no other app is using it."
-        );
-      }
+    const ob = getUserProfile();
+    if (!ob) {
+      router.replace("/onboarding");
+      return;
     }
-    startCamera();
-    return () => {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setProfile(ob);
+  }, [router]);
 
-  useEffect(() => {
-    if (phase !== "recording") return;
-    const id = window.setInterval(() => setElapsed(Date.now() - startedAtRef.current), 200);
-    return () => window.clearInterval(id);
-  }, [phase]);
+  const stream = useFormCoachStream({
+    exercise,
+    userProfile: profile,
+    enabled: profile != null,
+  });
 
-  function startRecording() {
-    if (!streamRef.current) return;
-    chunksRef.current = [];
-    const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"].find(
-      (m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)
-    );
-    const recorder = new MediaRecorder(streamRef.current, mime ? { mimeType: mime } : undefined);
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "video/webm" });
-      const url = URL.createObjectURL(blob);
-      setRecordedUrl(url);
-      setPhase("review");
-    };
-    recorderRef.current = recorder;
-    recorder.start(250);
-    startedAtRef.current = Date.now();
-    setElapsed(0);
-    setPhase("recording");
-  }
+  const transcript = stream.critiques;
+  const latestScore = stream.lastCritique?.form_score ?? null;
 
-  function stopRecording() {
-    recorderRef.current?.stop();
-  }
+  const avgScore = useMemo(() => {
+    if (transcript.length === 0) return null;
+    const sum = transcript.reduce((s, c) => s + c.form_score, 0);
+    return sum / transcript.length;
+  }, [transcript]);
 
-  function resetRecording() {
-    if (recordedUrl) URL.revokeObjectURL(recordedUrl);
-    setRecordedUrl(null);
-    setPhase("idle");
-    if (videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(() => {});
+  function endWorkout() {
+    if (transcript.length > 0) {
+      const ordered = [...transcript].reverse(); // chronological for storage
+      const avg = ordered.reduce((s, c) => s + c.form_score, 0) / ordered.length;
+      const session: WorkoutSession = {
+        id: `s-${Date.now()}`,
+        exercise,
+        started_at: startedAtRef.current,
+        ended_at: Date.now(),
+        critiques: ordered,
+        avg_form_score: Math.round(avg * 100) / 100,
+      };
+      addWorkoutSession(session);
     }
-  }
-
-  async function analyze() {
-    setPhase("analyzing");
-    await new Promise((r) => setTimeout(r, 2500));
-    const result = mockAnalyze("squat");
-    try {
-      window.sessionStorage.setItem("lml.lastResult", JSON.stringify(result));
-      if (recordedUrl) window.sessionStorage.setItem("lml.lastRecording", recordedUrl);
-    } catch {}
-    router.push("/workout/result");
+    router.push("/dashboard");
   }
 
   return (
@@ -135,144 +168,111 @@ export default function WorkoutPage() {
           </Button>
           <div className="flex items-center gap-2 text-sm">
             <Sparkles className="h-4 w-4 text-primary" />
-            <span>Capture</span>
+            <span>Live coach</span>
           </div>
-          <div className="w-[100px]" />
+          <StatusBadge status={stream.status} />
         </div>
       </header>
 
-      <section className="container pt-8">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Record a working set</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Capture from the side. Keep your full body in frame for the entire rep range.
-            </p>
-          </div>
-          <Badge variant="secondary" className="capitalize">
-            Squat
-          </Badge>
+      <section className="container pt-6">
+        <div className="flex flex-wrap items-center gap-2">
+          {EXERCISE_OPTIONS.map((ex) => (
+            <button
+              key={ex}
+              onClick={() => setExercise(ex)}
+              className={cn(
+                "rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors",
+                exercise === ex
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-border bg-card text-foreground hover:border-primary/40"
+              )}
+            >
+              {EXERCISE_LABELS[ex] ?? ex}
+            </button>
+          ))}
         </div>
       </section>
 
-      <section className="container mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
+      <section className="container mt-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-black aspect-video">
-          {error ? (
-            <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm text-muted-foreground">
-              {error}
+          <video
+            ref={stream.videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="h-full w-full object-cover"
+          />
+          {stream.error ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-8 text-center text-sm text-red-200">
+              {stream.error}
             </div>
           ) : null}
-
-          {phase !== "review" ? (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <video
-              ref={playbackRef}
-              src={recordedUrl ?? undefined}
-              controls
-              playsInline
-              className="h-full w-full object-contain bg-black"
-            />
-          )}
-
-          {phase === "idle" ? (
-            <div className="pointer-events-none absolute inset-0">
-              <div className="absolute left-4 top-4 max-w-xs rounded-lg border border-white/15 bg-black/55 p-3 text-xs text-white/85 backdrop-blur">
-                <div className="mb-1 flex items-center gap-2 font-semibold">
-                  <Camera className="h-3.5 w-3.5" /> Phone placement
-                </div>
-                <ul className="list-disc space-y-0.5 pl-4">
-                  <li>Set phone on floor, leaned ~75°</li>
-                  <li>6-8 ft (2 m) from the bar</li>
-                  <li>Capture full body from the side</li>
-                  <li>Good, even lighting</li>
-                </ul>
-              </div>
-              <div className="absolute inset-x-12 inset-y-8 rounded-xl border-2 border-dashed border-white/25" />
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-xs text-white/75 backdrop-blur">
-                Frame your full body
-              </div>
-            </div>
-          ) : null}
-
-          {phase === "recording" ? (
-            <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-red-500/90 px-3 py-1 text-xs font-medium text-white">
-              <span className="h-2 w-2 animate-pulse-glow rounded-full bg-white" />
-              REC · {formatDuration(elapsed)}
-            </div>
-          ) : null}
-
-          {phase === "analyzing" ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 backdrop-blur-sm">
-              <Loader2 className="h-10 w-10 animate-spin text-primary" />
-              <div className="text-base font-medium">Analyzing form…</div>
-              <div className="text-xs text-muted-foreground">Counting reps · measuring joint angles</div>
-            </div>
-          ) : null}
+          <div className="absolute left-3 top-3">
+            <StatusBadge status={stream.status} />
+          </div>
+          <div className="absolute right-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-xs text-white/80 backdrop-blur tabular-nums">
+            batches {stream.batchCount}
+          </div>
         </div>
 
-        <aside className="space-y-3">
-          <div className="rounded-2xl border border-border/60 bg-card/50 p-5">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">Coaching cues</div>
-            <ul className="mt-3 space-y-2 text-sm">
-              <li className="flex items-start gap-2">
-                <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> Brace before each descent.
-              </li>
-              <li className="flex items-start gap-2">
-                <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> Drive knees out, not in.
-              </li>
-              <li className="flex items-start gap-2">
-                <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> Below parallel if mobility allows.
-              </li>
-              <li className="flex items-start gap-2">
-                <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> Control the eccentric — ~2s down.
-              </li>
-            </ul>
-          </div>
-          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5 text-sm">
-            <div className="flex items-center gap-2 font-medium">
-              <Maximize2 className="h-4 w-4 text-primary" /> Tip
+        <aside className="flex flex-col gap-4">
+          <div
+            data-slot="heygen-avatar"
+            className="flex flex-1 min-h-[200px] flex-col items-center justify-center rounded-2xl border border-dashed border-primary/40 bg-primary/5 p-6 text-center"
+          >
+            <Sparkles className="mb-3 h-8 w-8 text-primary" />
+            <div className="text-base font-medium">HeyGen avatar embed here</div>
+            <div className="mt-1 max-w-xs text-sm text-muted-foreground">
+              Stream 2 mounts the live coach in this slot.
             </div>
-            <p className="mt-1 text-muted-foreground">
-              Record 1-2 working sets. Longer sets give better averages and catch fatigue-induced form breakdown.
-            </p>
+          </div>
+
+          <div className="rounded-2xl border border-border/60 bg-card/40">
+            <div className="border-b border-border/60 px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground">
+              Live transcript
+            </div>
+            <ul className="max-h-[280px] divide-y divide-border/40 overflow-y-auto">
+              {transcript.length === 0 ? (
+                <li className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  Waiting for the first cue from your coach…
+                </li>
+              ) : (
+                transcript.slice(0, 6).map((c, idx) => (
+                  <li
+                    key={`${c.batch_index}-${idx}`}
+                    className={cn(
+                      "px-4 py-3 text-sm transition-opacity",
+                      idx === 0 ? "opacity-100" : idx === 1 ? "opacity-80" : idx === 2 ? "opacity-65" : "opacity-50"
+                    )}
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className={cn("mt-1 inline-block h-2 w-2 shrink-0 rounded-full", scoreTone(c.form_score))} />
+                      <span className="flex-1">{c.critique_text}</span>
+                      <Badge variant="outline" className="shrink-0 tabular-nums">
+                        {Math.round(c.form_score * 100)}
+                      </Badge>
+                    </div>
+                  </li>
+                ))
+              )}
+            </ul>
           </div>
         </aside>
       </section>
 
+      <section className="container mt-6">
+        <FormScoreGauge score={latestScore} />
+      </section>
+
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border/60 bg-background/85 backdrop-blur">
-        <div className="container flex h-20 items-center justify-center gap-3">
-          {phase === "idle" ? (
-            <Button onClick={startRecording} size="xl" disabled={!!error} className="glow-emerald">
-              <CircleDot className="h-5 w-5" /> Start recording
-            </Button>
-          ) : null}
-          {phase === "recording" ? (
-            <Button onClick={stopRecording} size="xl" variant="destructive">
-              <Square className="h-5 w-5 fill-current" /> Stop
-            </Button>
-          ) : null}
-          {phase === "review" ? (
-            <>
-              <Button onClick={resetRecording} size="lg" variant="outline">
-                <RotateCcw className="h-4 w-4" /> Re-record
-              </Button>
-              <Button onClick={analyze} size="xl" className="glow-emerald">
-                <VideoIcon className="h-5 w-5" /> Analyze
-              </Button>
-            </>
-          ) : null}
-          {phase === "analyzing" ? (
-            <Button size="xl" disabled>
-              <Loader2 className="h-5 w-5 animate-spin" /> Analyzing…
-            </Button>
-          ) : null}
+        <div className="container flex h-20 items-center justify-between gap-3">
+          <div className="text-sm text-muted-foreground tabular-nums">
+            {transcript.length} cue{transcript.length === 1 ? "" : "s"}
+            {avgScore != null ? <> · avg {Math.round(avgScore * 100)}</> : null}
+          </div>
+          <Button onClick={endWorkout} size="xl" variant="destructive">
+            <StopCircle className="h-5 w-5" /> End workout
+          </Button>
         </div>
       </div>
     </main>
