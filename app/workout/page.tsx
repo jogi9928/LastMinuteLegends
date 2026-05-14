@@ -53,9 +53,10 @@ export default function WorkoutPage() {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
         }
-      } catch (err: any) {
+      } catch (err) {
+        const name = err instanceof Error ? err.name : "";
         setError(
-          err?.name === "NotAllowedError"
+          name === "NotAllowedError"
             ? "Camera access denied. Allow camera permissions and reload."
             : "Could not access camera. Ensure no other app is using it."
         );

@@ -58,7 +58,7 @@ export function MetricChart({ title, unit = "", data, color = "hsl(142 71% 45%)"
                 fontSize: 12,
               }}
               labelStyle={{ color: "hsl(240 5% 65%)" }}
-              formatter={(v: number) => [`${v.toFixed(decimals)} ${unit}`, title]}
+              formatter={(v) => [`${Number(v).toFixed(decimals)} ${unit}`, title]}
             />
             <ReferenceLine y={first} stroke="hsl(240 4% 28%)" strokeDasharray="4 4" />
             <Line

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, ArrowDown, ArrowUp, Minus, Sparkles } from "lucide-react";
@@ -93,6 +93,14 @@ function SessionPicker({ label, value, onChange, sessions }: SessionPickerProps)
 }
 
 export default function ComparePage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen" />}>
+      <ComparePageInner />
+    </Suspense>
+  );
+}
+
+function ComparePageInner() {
   const params = useSearchParams();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [aId, setAId] = useState<string>("");
