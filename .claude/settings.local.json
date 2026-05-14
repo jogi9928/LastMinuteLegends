@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(.venv\\\\Scripts\\\\python.exe scripts\\\\smoke_dry_run.py 2>&1)"
+    ]
+  }
+}
