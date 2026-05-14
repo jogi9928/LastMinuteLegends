@@ -48,6 +48,19 @@
 - Decisions made: Last 3 session summaries in oldest→newest order so model sees trend direction. Briefing capped at 60 tokens and 25 words — must be glanceable before a set.
 - Blockers: None.
 
+## Critique Response Tuning + Post-Workout Recap (2026-05-14, post-smoke-test)
+- Status: done (pending live re-test with bridge)
+- What was done:
+  - `src/llm/critique.py`: added `last_spoken_cues` param to `run_critique` and surfaced a new `## Recently Spoken Cues` prompt section instructing the model to rephrase, change angle, or stay silent rather than repeat verbatim. Tightened output rules: summary ≤25 words, verb-first cues mandatory, 0-4 fixes (empty list now valid), 0-2 positives. Added `run_post_workout_recap()` — separate Claude call with its own system prompt that consolidates accumulated priority 2-3 cues into 0-3 cleaned-up `top_fixes` + a short summary + a `next_session_focus` line. Reuses `_parse_critique_response` and normalizes any fallback into recap shape.
+  - `orchestrator.py`: added two per-user in-memory structures — `_recent_cues` (deque, maxlen=2) tracks priority-1 cues that the avatar actually spoke; `_workout_recap_buffer` accumulates priority 2-3 fixes across the workout. `/analyze` now passes `_recent_cues` into the critique call, splits returned `fixes` by priority, routes priority-1 to the mid-set inject path (unchanged) and priority 2-3 to the recap buffer; response now includes `pending_recap_count`. New endpoint `POST /workout/complete?user_id=...` runs `run_post_workout_recap` over the buffered cues, clears both buffers, returns `{status: "recap", captured_cue_count, recap: {summary, top_fixes, next_session_focus}}`.
+- Decisions made:
+  - Recent-cue feedback is bounded at the last 2 spoken priority-1 cues to keep the prompt tight and prevent stale context from suppressing valid re-cues.
+  - Buffers are in-memory only — workout boundary is signalled by the explicit `/workout/complete` call, matching the existing `_pending` pattern. Lost on restart, acceptable for hackathon scope.
+  - Priority-1 still fires mid-set immediately (safety override); the avatar stays silent on minor cues until the user ends the workout.
+  - Recap normalizer handles parse failure by mapping critique-shape fallback → recap shape with `_parse_error` flag, so `/workout/complete` never 500s.
+- Blockers: None. Needs a live bridge run to confirm (a) repetition drops when the same flaw persists across batches, (b) `/workout/complete` returns a clean 1-3 cue summary after a real session.
+
+
 ## Hour 5–6: API + Integration
 - Status: partial — dry-run smoke test PASSED; LIVE smoke test (real LiveAvatar session) still pending
 - What was done: Implemented `orchestrator.py` with three FastAPI routes: `POST /analyze`, `POST /onboarding`, `GET /briefing`. `init_db()` called at startup via lifespan. After the architecture pivots, `/analyze` now: (1) accepts a `ContextBatch` Pydantic model matching Stream 1's wire shape; (2) buffers batches per `user_id` (in-memory dict) and only fires Claude when 2 are queued AND ≥4.5s has elapsed since the last call — buffered responses return `{"status": "buffered", "pending_batches": n, "seconds_until_ready": s}`; (3) calls multimodal `run_critique` with the flushed pair; (4) writes via a compat shim that fills `frame_issues` with critique cues and leaves metric columns NULL; (5) returns `avatar_injected: false` as a stub. LiveAvatar injection is the remaining piece.

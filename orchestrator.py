@@ -1,7 +1,7 @@
 import os
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -14,7 +14,7 @@ from src.memory.store import (
     init_db, get_user, upsert_user,
     write_session, get_recent_sessions, get_recurring_issues,
 )
-from src.llm.critique import run_critique
+from src.llm.critique import run_critique, run_post_workout_recap
 from src.llm.briefing import generate_briefing
 from src.avatar.liveavatar import inject_critique
 
@@ -40,8 +40,15 @@ class ContextBatch(BaseModel):
 
 BATCHES_PER_CALL = 2
 IDLE_WINDOW_SEC = 4.5
+RECENT_CUES_MAXLEN = 2
 _pending: dict[str, list[dict]] = defaultdict(list)
 _last_call: dict[str, float] = {}
+# Last priority-1 cues the avatar actually spoke per user — fed back into the
+# next critique so the model rephrases instead of repeating verbatim.
+_recent_cues: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=RECENT_CUES_MAXLEN))
+# Priority 2-3 fixes accumulated during a workout, held for post-workout recap.
+# Cleared by POST /workout/complete.
+_workout_recap_buffer: dict[str, list[dict]] = defaultdict(list)
 
 
 class UserProfilePayload(BaseModel):
@@ -82,25 +89,37 @@ async def analyze(batch: ContextBatch, user_id: str = Query(...)):
     recent_sessions = get_recent_sessions(user_id, n=5)
     recurring_issues = get_recurring_issues(user_id, min_sessions=2)
 
-    critique = run_critique(flush, user_profile, recent_sessions, recurring_issues)
+    critique = run_critique(
+        flush,
+        user_profile,
+        recent_sessions,
+        recurring_issues,
+        last_spoken_cues=list(_recent_cues[user_id]),
+    )
 
-    has_priority_one = any(f.get("priority") == 1 for f in critique.get("fixes", []))
+    fixes = critique.get("fixes", [])
+    priority_one = [f for f in fixes if f.get("priority") == 1]
+    small_fixes = [f for f in fixes if f.get("priority") in (2, 3)]
+
     avatar_injected = False
     avatar_payloads = []
-    if has_priority_one:
-        top_cue = next(
-            f["cue"] for f in sorted(critique.get("fixes", []), key=lambda f: f.get("priority", 99))
-            if f.get("priority") == 1
-        )
+    if priority_one:
+        top_cue = priority_one[0]["cue"]
         avatar_payloads = inject_critique(top_cue)
         avatar_injected = True
+        _recent_cues[user_id].append(top_cue)
+
+    # Buffer priority 2-3 cues for the post-workout recap; the avatar stays
+    # silent on these mid-set per the FULL Mode "no chatter during work" rule.
+    if small_fixes:
+        _workout_recap_buffer[user_id].extend(small_fixes)
 
     # Compat shim: write_session expects metric fields that no longer exist
     # on the wire. We pass exercise + critique-derived issues; metric columns
     # become NULL. Schema kept stable per CLAUDE.md constraint.
     session_compat = {
         "exercise": flush[-1].get("exercise"),
-        "frame_issues": [fix.get("cue", "") for fix in critique.get("fixes", [])],
+        "frame_issues": [fix.get("cue", "") for fix in fixes],
     }
     session_id = write_session(user_id, session_compat, critique)
 
@@ -112,6 +131,7 @@ async def analyze(batch: ContextBatch, user_id: str = Query(...)):
         "critique": critique,
         "avatar_injected": avatar_injected,
         "avatar_payloads": avatar_payloads,
+        "pending_recap_count": len(_workout_recap_buffer[user_id]),
         "memory_snapshot": {
             "recurring_issues": recurring_issues,
             "trend": trend,
@@ -139,6 +159,28 @@ async def briefing(user_id: str = Query(...), exercise: str = Query(...)):
 
     cue = generate_briefing(exercise, user_profile, recurring_issues, last_critique)
     return {"cue": cue}
+
+
+@app.post("/workout/complete")
+async def workout_complete(user_id: str = Query(...)):
+    """Consolidate buffered priority 2-3 cues from the workout into 1-3 final
+    coaching points. Clears the buffer. Frontend speaks the recap via avatar.
+    """
+    user_profile = get_user(user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
+
+    small_fixes = _workout_recap_buffer.get(user_id, [])
+    recap = run_post_workout_recap(small_fixes, user_profile)
+
+    _workout_recap_buffer[user_id] = []
+    _recent_cues[user_id].clear()
+
+    return {
+        "status": "recap",
+        "captured_cue_count": len(small_fixes),
+        "recap": recap,
+    }
 
 
 def _compute_trend(sessions: list[dict]) -> str:

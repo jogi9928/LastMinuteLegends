@@ -80,5 +80,7 @@ the Hour 5–6 final smoke test.
       avatar renders
 
 ## Stretch
-- [ ] Debounce/threshold tuning for critique injection (avoid avatar talking over itself)
+- [x] Debounce/threshold tuning for critique injection (avoid avatar talking over itself)
+      — `_recent_cues` ring + "Recently Spoken Cues" prompt block force rephrase
+      or silence on persisting flaws; priority 2-3 cues held for post-workout recap
 - [ ] Progress trend: improving / stable / regressing over last N sessions

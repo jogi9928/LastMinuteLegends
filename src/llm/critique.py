@@ -44,6 +44,7 @@ def _build_text_block(
     user_profile: dict | None,
     recent_sessions: list[dict] | None,
     recurring_issues: list[str] | None,
+    last_spoken_cues: list[str] | None,
 ) -> str:
     exercise = batches[0].get("exercise") if batches else "unknown"
     total_window = sum((b.get("window_seconds") or 0) for b in batches)
@@ -74,6 +75,18 @@ def _build_text_block(
         for issue in recurring_issues:
             memory_section += f"- {issue}\n"
 
+    spoken_section = ""
+    if last_spoken_cues:
+        spoken_section = "\n## Recently Spoken Cues (avatar said these in the last 1-2 calls)\n"
+        for c in last_spoken_cues:
+            spoken_section += f"- {c}\n"
+        spoken_section += (
+            "Do NOT repeat these verbatim. If the same flaw clearly persists, "
+            "rephrase with a different angle (different body part focus, sensation, "
+            "or external cue). If the lifter has corrected it, acknowledge briefly "
+            "in `positives` and move on. If nothing new is wrong, return `fixes: []`.\n"
+        )
+
     motion_blocks = []
     for i, b in enumerate(batches):
         sampled = _downsample(b.get("keypoints_sequence") or [], KEYPOINTS_FRAMES_PER_BATCH)
@@ -86,28 +99,28 @@ def _build_text_block(
     return (
         f"Analysing ~{total_window:.1f}s of motion for {exercise}. "
         f"{image_count} skeleton-overlay images precede this text in temporal order.\n"
-        f"{profile_section}{memory_section}\n"
+        f"{profile_section}{memory_section}{spoken_section}\n"
         "## Motion Data (downsampled keypoint frames)\n"
         + "\n\n".join(motion_blocks)
         + "\n\n"
         "Respond ONLY with a JSON object matching this exact schema — no markdown, no extra text:\n"
         "{\n"
-        '  "summary": "<1-2 sentence overall assessment>",\n'
+        '  "summary": "<≤25-word overall assessment>",\n'
         '  "positives": ["<strength observed>"],\n'
         '  "fixes": [\n'
-        '    {"cue": "<actionable coaching cue>", "priority": <1-3 where 1=highest>}\n'
+        '    {"cue": "<verb-first actionable cue>", "priority": <1-3 where 1=highest>}\n'
         "  ]\n"
         "}\n\n"
         "Rules:\n"
-        "- Include at least one positive even if form is poor\n"
-        "- Fixes must be actionable cues (e.g. \"Drive knees out over pinky toe on descent\"), "
-        "not vague observations\n"
-        "- Priority 1 = safety/injury risk, 2 = major performance loss, 3 = refinement\n"
+        "- Priority 1 = safety/injury risk (spoken mid-set), 2 = major performance loss, 3 = refinement\n"
+        "- Cues MUST start with a verb (\"Drive…\", \"Brace…\", \"Sit…\"); no vague observations\n"
         "- If user has injuries, elevate any related issue to priority 1\n"
         "- If an issue appears in recurring_issues, escalate it to priority 1 regardless of severity\n"
-        "- Acknowledge trend from session history if clearly improving or worsening\n"
-        "- Keep summary under 40 words\n"
-        "- 1-3 positives, 1-5 fixes"
+        "- Do NOT repeat any cue from \"Recently Spoken Cues\" verbatim — change angle or stay silent\n"
+        "- Summary: ≤25 words, no filler\n"
+        "- Positives: 0-2 items, each ≤10 words\n"
+        "- Fixes: 0-4 items — empty list is valid when form is clean or only the recently-spoken issue persists\n"
+        "- Acknowledge trend from session history only if clearly improving or worsening"
     )
 
 
@@ -162,11 +175,14 @@ def run_critique(
     user_profile: dict | None = None,
     recent_sessions: list[dict] | None = None,
     recurring_issues: list[str] | None = None,
+    last_spoken_cues: list[str] | None = None,
 ) -> dict:
     """Analyse 1-2 ContextBatches (~2-4s of motion) and return critique JSON.
 
     Multimodal: each batch's sampled_images become inline-data image Parts;
     the keypoints_sequence is downsampled and joined into a single text Part.
+    `last_spoken_cues` are the priority-1 cues the avatar said in recent
+    calls — passed in so the model rephrases instead of repeating verbatim.
     """
     if _is_low_confidence(batches):
         return _low_confidence_response()
@@ -180,7 +196,11 @@ def run_critique(
                 continue
             parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
     parts.append(
-        types.Part.from_text(text=_build_text_block(batches, user_profile, recent_sessions, recurring_issues))
+        types.Part.from_text(
+            text=_build_text_block(
+                batches, user_profile, recent_sessions, recurring_issues, last_spoken_cues
+            )
+        )
     )
 
     n_images = sum(1 for p in parts if getattr(p, "inline_data", None) is not None)
@@ -199,3 +219,99 @@ def run_critique(
     )
 
     return _parse_critique_response(response.text or "")
+
+
+RECAP_SYSTEM_PROMPT = (
+    "You are a strength coach giving a short post-workout debrief. "
+    "You receive a list of minor form cues (priority 2-3) that came up during "
+    "the session but were not spoken to the lifter mid-set. Consolidate them: "
+    "merge duplicates, keep what's recurrent or impactful, drop noise."
+)
+
+
+def _empty_recap() -> dict:
+    return {
+        "summary": "Clean session — nothing minor worth flagging.",
+        "top_fixes": [],
+        "next_session_focus": "Keep the same setup and intent next time.",
+    }
+
+
+def run_post_workout_recap(
+    small_fixes: list[dict],
+    user_profile: dict | None = None,
+) -> dict:
+    """Consolidate accumulated priority 2-3 cues from a workout into 1-3
+    final coaching points for the user to hear after the set ends.
+
+    Input `small_fixes`: list of {"cue": str, "priority": int} dicts captured
+    across the workout. Returns:
+        {
+          "summary": str,                   # ≤30 words
+          "top_fixes": [{cue, priority}],   # 0-3 consolidated cues
+          "next_session_focus": str         # one short sentence
+        }
+    """
+    if not small_fixes:
+        return _empty_recap()
+
+    profile_section = ""
+    if user_profile:
+        injuries = user_profile.get("injuries", [])
+        exp = user_profile.get("experience") or {}
+        profile_section = (
+            "\n## User Profile\n"
+            f"- Goal: {user_profile.get('goal', 'general_fitness')}\n"
+            f"- Experience: {exp.get('intensity', 'beginner')} ({exp.get('years', 0)} yrs)\n"
+            f"- Injuries: {', '.join(injuries) or 'none'}\n"
+        )
+
+    cue_lines = "\n".join(
+        f"- (p{f.get('priority', 3)}) {f.get('cue', '').strip()}"
+        for f in small_fixes
+        if f.get("cue")
+    )
+
+    user_text = (
+        f"Workout produced {len(small_fixes)} minor cues across the session.\n"
+        f"{profile_section}\n"
+        "## Captured Cues\n"
+        f"{cue_lines}\n\n"
+        "Respond ONLY with a JSON object — no markdown, no prose:\n"
+        "{\n"
+        '  "summary": "<≤30-word debrief>",\n'
+        '  "top_fixes": [\n'
+        '    {"cue": "<verb-first cue>", "priority": <2 or 3>}\n'
+        "  ],\n"
+        '  "next_session_focus": "<one short sentence>"\n'
+        "}\n\n"
+        "Rules:\n"
+        "- 1-3 fixes max — merge near-duplicates into a single cleaner cue\n"
+        "- Order top_fixes by impact (most important first)\n"
+        "- Cues must be verb-first and specific\n"
+        "- Tone: encouraging and direct, not preachy"
+    )
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=user_text,
+        config=types.GenerateContentConfig(
+            system_instruction=RECAP_SYSTEM_PROMPT,
+            temperature=0.4,
+            max_output_tokens=512,
+            response_mime_type="application/json",
+        ),
+    )
+
+    parsed = _parse_critique_response(response.text or "")
+    # _parse_critique_response returns a critique-shaped fallback on failure;
+    # normalize to recap shape.
+    if "top_fixes" not in parsed:
+        return {
+            "summary": parsed.get("summary", "Recap unavailable."),
+            "top_fixes": parsed.get("fixes", [])[:3],
+            "next_session_focus": "Repeat today's setup; we'll refine next session.",
+            "_parse_error": parsed.get("_parse_error", False),
+        }
+    parsed["top_fixes"] = parsed.get("top_fixes", [])[:3]
+    return parsed
