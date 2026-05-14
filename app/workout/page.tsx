@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HeyGenAvatar } from "@/components/HeyGenAvatar";
+import { PoseOverlay } from "@/components/PoseOverlay";
 import { useFormCoachStream } from "@/lib/useFormCoachStream";
 import { getUserProfile, addWorkoutSession } from "@/lib/storage";
 import { EXERCISE_OPTIONS } from "@/lib/mock";
@@ -310,6 +311,7 @@ export default function WorkoutPage() {
               muted
               className="h-full w-full object-cover"
             />
+            <PoseOverlay videoRef={stream.videoRef} />
             {stream.error ? (
               <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-4 text-center text-xs text-red-200">
                 {stream.error}
