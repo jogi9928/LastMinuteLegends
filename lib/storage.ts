@@ -2,6 +2,7 @@ import type { UserProfile, WorkoutSession } from "./types";
 
 const PROFILE_KEY = "userProfile";
 const SESSIONS_KEY = "workoutSessions";
+const USER_ID_KEY = "userId";
 const LEGACY_KEYS = [
   "lml.onboarding",
   "lml.onboarding.draft",
@@ -9,6 +10,26 @@ const LEGACY_KEYS = [
   "lml.profile.draft",
   "lml.sessions",
 ];
+
+function generateUserId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Fallback: timestamp-based id (very unlikely to be hit in modern browsers)
+  return `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function getUserId(): string | null {
+  return safeGetItem(USER_ID_KEY);
+}
+
+export function ensureUserId(): string {
+  const existing = safeGetItem(USER_ID_KEY);
+  if (existing) return existing;
+  const fresh = generateUserId();
+  safeSetItem(USER_ID_KEY, fresh);
+  return fresh;
+}
 
 function safeGetItem(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -87,5 +108,6 @@ export function clearAll() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(PROFILE_KEY);
   window.localStorage.removeItem(SESSIONS_KEY);
+  window.localStorage.removeItem(USER_ID_KEY);
   purgeLegacy();
 }

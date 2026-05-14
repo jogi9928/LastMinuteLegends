@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { StepShell } from "@/components/onboarding/StepShell";
 import { OptionCard } from "@/components/onboarding/OptionCard";
-import { setOnboarding } from "@/lib/storage";
+import { setOnboarding, ensureUserId } from "@/lib/storage";
 import type { UserProfile } from "@/lib/types";
 
 type CalibrationExercise = "bodyweight_squat" | "pushup";
@@ -105,7 +105,7 @@ export default function OnboardingPage() {
     if (step > 1) setStep(step - 1);
   }
 
-  function finish() {
+  async function finish() {
     const otherInjury = data._injuriesOther.trim();
     const profile: UserProfile = {
       goal: data.goal,
@@ -118,9 +118,22 @@ export default function OnboardingPage() {
       baseline: { weight: data.baseline.weight, height: data.baseline.height },
     };
     setOnboarding(profile);
+    const userId = ensureUserId();
     try {
       window.localStorage.removeItem(DRAFT_KEY);
     } catch {}
+    // Sync to Stream 2's orchestrator so /analyze can find the user.
+    // Best-effort: if the service isn't up, we still proceed — workout
+    // page will surface the error when critiques start failing.
+    try {
+      await fetch("/api/onboarding/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, userProfile: profile }),
+      });
+    } catch {
+      /* orchestrator offline — non-fatal */
+    }
     router.push("/dashboard");
   }
 

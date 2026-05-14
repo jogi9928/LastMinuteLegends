@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { HeyGenAvatar } from "@/components/HeyGenAvatar";
 import { PoseOverlay } from "@/components/PoseOverlay";
 import { useFormCoachStream } from "@/lib/useFormCoachStream";
-import { getUserProfile, addWorkoutSession } from "@/lib/storage";
+import { getUserProfile, addWorkoutSession, ensureUserId } from "@/lib/storage";
 import { EXERCISE_OPTIONS } from "@/lib/mock";
 import type { Critique, UserProfile, WorkoutSession } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -118,6 +118,7 @@ function FormScoreGauge({ score }: { score: number | null }) {
 export default function WorkoutPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [exercise, setExercise] = useState<string>("squat");
   const startedAtRef = useRef<number>(Date.now());
 
@@ -133,6 +134,7 @@ export default function WorkoutPage() {
       return;
     }
     setProfile(ob);
+    setUserId(ensureUserId());
   }, [router]);
 
   const handleCritique = useCallback((c: Critique) => {
@@ -154,8 +156,9 @@ export default function WorkoutPage() {
   const stream = useFormCoachStream({
     exercise,
     userProfile: profile,
+    userId,
     onCritique: handleCritique,
-    enabled: profile != null,
+    enabled: profile != null && userId != null,
   });
 
   // Pop from queue when the avatar is idle.

@@ -15,6 +15,7 @@ export type StreamStatus =
 interface UseFormCoachStreamOptions {
   exercise: string;
   userProfile: UserProfile | null;
+  userId: string | null;
   onCritique?: (c: Critique) => void;
   fps?: number; // frame send rate to WS (default 10)
   jpegQuality?: number; // canvas → JPEG quality (default 0.75)
@@ -32,6 +33,7 @@ function issuesAreSubset(a: string[], b: string[]): boolean {
 export function useFormCoachStream({
   exercise,
   userProfile,
+  userId,
   onCritique,
   fps = 10,
   jpegQuality = 0.75,
@@ -45,6 +47,7 @@ export function useFormCoachStream({
   const lastFrameAtRef = useRef<number>(0);
   const exerciseRef = useRef<string>(exercise);
   const profileRef = useRef<UserProfile | null>(userProfile);
+  const userIdRef = useRef<string | null>(userId);
   const onCritiqueRef = useRef<typeof onCritique>(onCritique);
   const lastCritiqueRef = useRef<Critique | null>(null);
   const reconnectAttemptedRef = useRef<boolean>(false);
@@ -60,6 +63,7 @@ export function useFormCoachStream({
   // Keep latest refs for stable closures
   useEffect(() => { exerciseRef.current = exercise; }, [exercise]);
   useEffect(() => { profileRef.current = userProfile; }, [userProfile]);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
   useEffect(() => { onCritiqueRef.current = onCritique; }, [onCritique]);
 
   // Send exercise change without reopening
@@ -77,13 +81,16 @@ export function useFormCoachStream({
   const handleContextBatch = useCallback(async (batch: ContextBatch) => {
     setBatchCount((n) => n + 1);
     const profile = profileRef.current;
-    if (!profile) return;
+    const uid = userIdRef.current;
+    if (!profile || !uid) return;
     try {
       const res = await fetch("/api/critique", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contextBatch: batch, userProfile: profile }),
+        body: JSON.stringify({ contextBatch: batch, userProfile: profile, userId: uid }),
       });
+      // 204 means the orchestrator buffered this batch — no critique yet.
+      if (res.status === 204) return;
       if (!res.ok) return;
       const critique = (await res.json()) as Critique;
 
