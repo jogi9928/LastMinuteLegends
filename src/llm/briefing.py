@@ -1,10 +1,13 @@
 import os
-import json
-import anthropic
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# STREAM 3 MOD (integration-live-agent): swapped Anthropic → Gemini.
+# Prompt and output shape unchanged from Luke's original.
+from google import genai
+from google.genai import types
 
-MODEL = "claude-haiku-4-5"
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+MODEL = os.environ.get("GEMINI_BRIEFING_MODEL", "gemini-2.5-flash")
 
 
 def generate_briefing(
@@ -41,10 +44,13 @@ Context:
 Write ONE short, punchy reminder (max 25 words) the athlete should think about before starting this set.
 Be specific to the exercise and their history. No fluff. Return plain text only."""
 
-    message = client.messages.create(
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=60,
-        messages=[{"role": "user", "content": prompt}],
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.5,
+            max_output_tokens=80,
+        ),
     )
 
-    return message.content[0].text.strip()
+    return (response.text or "").strip()

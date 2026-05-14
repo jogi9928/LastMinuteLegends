@@ -1,10 +1,17 @@
 import os
 import json
-import anthropic
+import base64
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# STREAM 3 MOD (integration-live-agent): swapped Anthropic → Gemini per
+# team decision to use Google's API key. Prompt, schema, parser, and
+# low-confidence fallback are unchanged from Luke's original; only the
+# model-call shape (Anthropic blocks → Gemini Parts) was rewritten.
+from google import genai
+from google.genai import types
 
-MODEL = "claude-haiku-4-5"
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+MODEL = os.environ.get("GEMINI_CRITIQUE_MODEL", "gemini-2.5-flash")
 
 KEYPOINTS_FRAMES_PER_BATCH = 8
 LOW_CONFIDENCE_FRAME_THRESHOLD = 5
@@ -115,10 +122,11 @@ def _low_confidence_response() -> dict:
 
 
 def _parse_critique_response(raw: str) -> dict:
-    """Parse Claude's response into the critique schema, tolerating markdown fences
-    and surrounding prose. Falls back to a safe default rather than crashing.
+    """Parse the LLM response into the critique schema, tolerating markdown
+    fences and surrounding prose. Falls back to a safe default rather than
+    crashing.
     """
-    text = raw.strip()
+    text = (raw or "").strip()
     # Strip ```json ... ``` or ``` ... ``` fences
     if text.startswith("```"):
         text = text[3:]
@@ -157,37 +165,37 @@ def run_critique(
 ) -> dict:
     """Analyse 1-2 ContextBatches (~2-4s of motion) and return critique JSON.
 
-    Multimodal: each batch's sampled_images become image blocks; the
-    keypoints_sequence is downsampled and joined into a single text block.
+    Multimodal: each batch's sampled_images become inline-data image Parts;
+    the keypoints_sequence is downsampled and joined into a single text Part.
     """
     if _is_low_confidence(batches):
         return _low_confidence_response()
 
-    content = []
+    parts: list[types.Part] = []
     for b in batches:
-        for img in (b.get("sampled_images") or []):
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg", "data": img},
-            })
-    content.append({
-        "type": "text",
-        "text": _build_text_block(batches, user_profile, recent_sessions, recurring_issues),
-    })
-
-    n_images = sum(1 for c in content if c.get("type") == "image")
-    n_keypoint_frames = sum(len(b.get("keypoints_sequence") or []) for b in batches)
-    print(f"[critique] -> Claude  images={n_images}  keypoint_frames={n_keypoint_frames}  batches={len(batches)}")
-
-    message = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {"role": "user", "content": content},
-            {"role": "assistant", "content": "{"},
-        ],
+        for img_b64 in (b.get("sampled_images") or []):
+            try:
+                img_bytes = base64.b64decode(img_b64)
+            except Exception:
+                continue
+            parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
+    parts.append(
+        types.Part.from_text(text=_build_text_block(batches, user_profile, recent_sessions, recurring_issues))
     )
 
-    raw = "{" + message.content[0].text
-    return _parse_critique_response(raw)
+    n_images = sum(1 for p in parts if getattr(p, "inline_data", None) is not None)
+    n_keypoint_frames = sum(len(b.get("keypoints_sequence") or []) for b in batches)
+    print(f"[critique] -> Gemini  images={n_images}  keypoint_frames={n_keypoint_frames}  batches={len(batches)}")
+
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=parts,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.4,
+            max_output_tokens=1024,
+            response_mime_type="application/json",
+        ),
+    )
+
+    return _parse_critique_response(response.text or "")
